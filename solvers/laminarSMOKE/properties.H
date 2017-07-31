@@ -38,6 +38,7 @@
 |                                                                         |
 \*-----------------------------------------------------------------------*/
 
+if(virtual_chemistry == false)
 {
 	double tStart = OpenSMOKE::OpenSMOKEGetCpuTime();
 
@@ -314,6 +315,153 @@
 					Dsoret[i].boundaryField()[patchi][facei] = Dmix[index-1].boundaryField()[patchi][facei]*tetamixvector[index]*thermodynamicsMapXML->MW(index-1)/pMWmix[facei];
 					#endif
 				}
+			}
+		}
+	}
+	
+	double tEnd = OpenSMOKE::OpenSMOKEGetCpuTime();
+
+	Info << "done in " << tEnd - tStart << " s  (" << (tEnd-tStart)/double(mesh.nCells())*1000. << " ms per cell)" << endl;
+}
+
+else
+{
+	double tStart = OpenSMOKE::OpenSMOKEGetCpuTime();
+
+	Info<< "Properties evaluation... " ;
+
+	const double mu0 = 1.8405e-5;	// [kg/m/s]
+	const double T0  = 300.;	// [K]
+	const double Beta = 0.6759;
+	const double Pr0 = 0.7;
+
+	const int indexTableMW = 1;
+
+	Eigen::VectorXd massFractionsEigen(thermodynamicsMapXML->NumberOfSpecies());
+	Eigen::VectorXd table(virtualChemistryTable->NumberOfTabulatedVariables());
+
+	// Internal fields
+	{
+		const scalarField& TCells = T.internalField();
+		const scalarField& pCells = p.internalField(); 
+
+		#if OPENFOAM_VERSION >= 40
+		scalarField& cTotCells = cTot.ref();
+		scalarField& psiCells =  psi.ref();
+		scalarField& muCells  =  mu.ref();
+		scalarField& lambdaCells = lambda.ref();
+		scalarField& cpCells = cp.ref();
+		scalarField& MWmixCells = MWmix.ref();
+		#else
+		scalarField& cTotCells = cTot.internalField();
+		scalarField& psiCells =  psi.internalField();
+		scalarField& muCells  =  mu.internalField();
+		scalarField& lambdaCells = lambda.internalField();
+		scalarField& cpCells = cp.internalField();
+		scalarField& MWmixCells = MWmix.internalField();
+		#endif
+
+		forAll(TCells, celli)
+		{
+			// Interpolation from tables
+			const double YN2 = Y[inertIndex].internalField()[celli];
+			virtualChemistryTable->Interpolation(YN2, table.data());
+
+			// Concentration [kmol/m3]
+			cTotCells[celli] = pCells[celli]/PhysicalConstants::R_J_kmol/TCells[celli];
+
+			// Molecular weight [kmol/m3]
+			MWmixCells[celli] = table[indexTableMW];
+
+			// Density/Pressure ratio [kg/m3/Pa]
+			psiCells[celli]  = cTotCells[celli]*MWmixCells[celli]/pCells[celli];
+			
+			// Dynamic viscosity [kg/m/s]
+			muCells[celli] = mu0*std::pow(TCells[celli]/T0, Beta);
+		
+			// Constant pressure specific heat [J/kg/K] (TODO)
+               		// cpCells[celli] = thermodynamicsMapXML->cpMolar_Mixture_From_MoleFractions(moleFractions.GetHandle());	// [J/kmol/K]
+			// cpCells[celli] = cpCells[celli]/MWmixCells[celli];								// [J/kg/K]
+			   cpCells[celli] = 1000.;		
+
+			// Thermal conductivity [W/m/K]
+			lambdaCells[celli] = muCells[celli]*cpCells[celli]/Pr0;
+			
+			// Diffusion coefficients [m2/s]
+			{
+				const double coefficient = lambdaCells[celli]/(pCells[celli]*psiCells[celli])/cpCells[celli];
+				
+				#if OPENFOAM_VERSION >= 40
+				for(int i=0;i<thermodynamicsMapXML->NumberOfSpecies();i++)
+					Dmix[i].ref()[celli] = coefficient/LewisNumbers(i);
+				#else
+				for(int i=0;i<thermodynamicsMapXML->NumberOfSpecies();i++)
+					Dmix[i].internalField()[celli] = coefficient/LewisNumbers(i);
+				#endif	
+			}
+		}
+    	}
+
+	// Boundaries
+	forAll(T.boundaryField(), patchi)
+	{
+		#if OPENFOAM_VERSION >= 40
+		fvPatchScalarField& pp = p.boundaryFieldRef()[patchi];
+		fvPatchScalarField& pT = T.boundaryFieldRef()[patchi];
+		fvPatchScalarField& pcTot = cTot.boundaryFieldRef()[patchi];
+		fvPatchScalarField& ppsi  = psi.boundaryFieldRef()[patchi];
+		fvPatchScalarField& pmu   = mu.boundaryFieldRef()[patchi];
+		fvPatchScalarField& plambda = lambda.boundaryFieldRef()[patchi];
+		fvPatchScalarField& pcp = cp.boundaryFieldRef()[patchi];
+		fvPatchScalarField& pMWmix = MWmix.boundaryFieldRef()[patchi];
+		#else
+		fvPatchScalarField& pp = p.boundaryField()[patchi];
+		fvPatchScalarField& pT = T.boundaryField()[patchi];
+		fvPatchScalarField& pcTot = cTot.boundaryField()[patchi];
+		fvPatchScalarField& ppsi  = psi.boundaryField()[patchi];
+		fvPatchScalarField& pmu   = mu.boundaryField()[patchi];
+		fvPatchScalarField& plambda = lambda.boundaryField()[patchi];
+		fvPatchScalarField& pcp = cp.boundaryField()[patchi];
+		fvPatchScalarField& pMWmix = MWmix.boundaryField()[patchi];
+		#endif
+        
+		forAll(pT, facei)
+		{
+			// Interpolation from tables
+			const double YN2 = Y[inertIndex].boundaryField()[patchi][facei];
+			virtualChemistryTable->Interpolation(YN2, table.data());
+
+			// Concentration [kmol/m3]
+			pcTot[facei] = pp[facei]/(PhysicalConstants::R_J_kmol*pT[facei]);
+
+			// Concentration [kmol/m3]
+			ppsi[facei]  = pcTot[facei]*pMWmix[facei]/pp[facei];
+
+			// Molecular weight [kmol/m3]
+			pMWmix[facei] = table[indexTableMW];
+
+			// Dynamic viscosity [kg/m/s]
+			pmu[facei] = mu0*std::pow(pT[facei]/T0, Beta);
+			
+			// Constant pressure specific heat [J/kg/K] (TODO)
+			// pcp[facei] = thermodynamicsMapXML->cpMolar_Mixture_From_MoleFractions(moleFractions.GetHandle());	// [J/Kmol/K]
+			// pcp[facei] = pcp[facei]/pMWmix[facei];									// [J/kg/K]
+			pcp[facei] = 1000.;
+
+			// Thermal conductivity [W/m/K]
+			plambda[facei] = pmu[facei]*pcp[facei]/Pr0;
+
+			// Diffusion coefficients [m2/s]	
+			{
+				const double coefficient =  plambda[facei]/(pp[facei]*ppsi[facei])/pcp[facei];
+
+				#if OPENFOAM_VERSION >= 40
+				for(int i=0;i<thermodynamicsMapXML->NumberOfSpecies();i++)
+					Dmix[i].boundaryFieldRef()[patchi][facei] = coefficient/LewisNumbers(i);
+				#else
+				for(int i=0;i<thermodynamicsMapXML->NumberOfSpecies();i++)
+					Dmix[i].boundaryField()[patchi][facei] = coefficient/LewisNumbers(i);
+				#endif
 			}
 		}
 	}

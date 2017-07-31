@@ -590,4 +590,34 @@ OpenSMOKE::ODE_Parameters odeParameterBatchReactorHomogeneous;
 //label minMaxUpdate  = 25;
 //label minMaxCounter = minMaxUpdate;
 
+Switch virtual_chemistry = false;
+OpenSMOKE::VirtualChemistry* virtualChemistryTable;
+const dictionary& virtualChemistryDictionary = solverOptions.subDict("VirtualChemistry");
+{
+	virtual_chemistry = Switch(virtualChemistryDictionary.lookup(word("virtualChemistry")));
+	
+	if ( virtual_chemistry == true)
+	{
+		Foam::string tabulation_file = virtualChemistryDictionary.lookup("table");
+		boost::filesystem::path tabulation_file_complete_path = tabulation_file;
+
+		virtualChemistryTable = new OpenSMOKE::VirtualChemistry(tabulation_file_complete_path);
+
+		// Check interpolation
+		Eigen::VectorXd v(virtualChemistryTable->NumberOfTabulatedVariables());
+		virtualChemistryTable->Interpolation(0.30, v.data());
+		for(unsigned int i=0;i<virtualChemistryTable->NumberOfTabulatedVariables();i++)
+			Info << v(i) << endl;
+		getchar();
+		virtualChemistryTable->Interpolation(0.50, v.data());
+		for(unsigned int i=0;i<virtualChemistryTable->NumberOfTabulatedVariables();i++)
+			Info << v(i) << endl;
+		getchar();
+		virtualChemistryTable->Interpolation(0.70, v.data());
+		for(unsigned int i=0;i<virtualChemistryTable->NumberOfTabulatedVariables();i++)
+			Info << v(i) << endl;
+		getchar();
+	}
+}
+
 Info<< "Solver options correctly read\n" << endl;

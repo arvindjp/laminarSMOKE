@@ -105,6 +105,9 @@
 // Soot
 #include "sootUtilities.H"
 
+// Virtual chemistry
+#include "VirtualChemistry.h"
+
 template<typename Solver, typename OdeBatch>
 void SolveOpenSourceSolvers(OdeBatch& ode, const double t0, const double tf, const OpenSMOKE::OpenSMOKEVectorDouble& y0, OpenSMOKE::OpenSMOKEVectorDouble& yf, const OpenSMOKE::ODE_Parameters& parameters)
 {
